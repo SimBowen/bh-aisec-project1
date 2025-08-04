@@ -88,10 +88,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
       - name: Install slsa-verifier
         run: |
-          # Download and install slsa-verifier
-          curl -sSfL https://raw.githubusercontent.com/slsa-framework/slsa-verifier/main/install.sh | sh -s -- -b /usr/local/bin v2.7.1
+          go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@v2.7.1
+          
+          # Add Go bin to PATH
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           
           # Verify installation by checking help
           slsa-verifier --help
