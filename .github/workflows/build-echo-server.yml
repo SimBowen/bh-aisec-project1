@@ -80,7 +80,6 @@ jobs:
       registry-password: ${{ secrets.REGISTRY_PASSWORD }}
       #registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-  # NEW: Add verification job
   verify-provenance:
     name: Verify SLSA Provenance
     needs: [build, provenance]
@@ -89,10 +88,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install slsa-verifier
-        uses: slsa-framework/slsa-verifier-action@v2
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
-          verifier-version: v2.7.1
+          go-version: '1.23'
+
+      - name: Install slsa-verifier
+        run: |
+          go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@v2.7.1
+          
+          # Add Go bin to PATH
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          
+          # Verify installation
+          slsa-verifier --version
 
       - name: Authenticate Docker
         uses: docker/login-action@v3
