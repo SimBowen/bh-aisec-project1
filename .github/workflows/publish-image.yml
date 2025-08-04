@@ -1,47 +1,154 @@
-name: Publish image
+name: Publish policy evaluator
 
-on:
-  workflow_dispatch:
-    inputs:
-      image:
-        description: "The OCI image name. This must not include a tag or digest."
-        type: string
-        default: "docker.io/htxbowen/bh-aisec-project1-echo-server"
-      digest:
-        description: "The OCI image digest. The image digest of the form '<algorithm>:<digest>' (e.g. 'sha256:abcdef...')"
-        type: string
-        default: "sha256:ce2f543c322c5b77f31bf2715dc7b54bcf1497e32e0223be7901048940005dc6"
-      environment:
-        type: choice
-        description: Environment to use
-        options: 
-        - prod
-        - staging
-
-permissions: read-all
+permissions:
+  contents: read
 
 defaults:
   run:
     shell: bash
 
-env:
-  IMAGE_REGISTRY: docker.io
-  IMAGE_NAME: ${{ github.repository }}-echo-server
+on:
+  workflow_call:
+    secrets:
+      registry-username:
+        description: "Username to log into the container registry."
+      registry-password:
+        description: "Password to log in the container registry."
+
+    inputs:
+      image:
+        description: "The OCI image name. This must not include a tag or digest."
+        required: true
+        type: string
+      digest:
+        description: "The OCI image digest. The image digest of the form '<algorithm>:<digest>' (e.g. 'sha256:abcdef...')"
+        required: true
+        type: string
+      registry-username:
+        description: "Username to log into the container registry."
+        type: string
+      environment:
+        description: "The environment the image is for. Must match one of the fields defined in the publish policy. Example: prod, dev, etc."
+        type: string
+      continue-on-error:
+        description: "Prevents a workflow run from failing when a job fails. Set to 'true' to allow a workflow run to pass when a job fails."
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      outcome:
+        description: "The outcome status of the run ('success' or 'failure')."
+        value: ${{ jobs.final.outputs.outcome }}
 
 jobs:
-  publish:
+  detect-env:
+    outputs:
+      outcome: ${{ steps.final.outputs.outcome }}
+      repository: ${{ steps.detect.outputs.repository }}
+      ref: ${{ steps.detect.outputs.ref }}
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write # for creating OIDC tokens for signing.
-      packages: write # for uploading attestations.
-      contents: read # To read the repo.
-    uses: SimBowen/bh-aisec-organization/.github/workflows/image-publisher.yml@main
-    with:
-      environment: ${{ inputs.environment }}
-      image: ${{ inputs.image }}
-      digest: ${{ inputs.digest }}
-      # Use name rather than env variable because env are not available for reusable workflows.
-      registry-username: SimBowen
-      #registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-      #registry-password: ${{ secrets.GITHUB_TOKEN }}
+      id-token: write
+    steps:
+      - name: Detect the generator ref
+        id: detect
+        continue-on-error: true
+        uses: slsa-framework/slsa-github-generator/.github/actions/detect-workflow-js@v1.9.0
+
+      - name: Final outcome
+        id: final
+        env:
+          SUCCESS: ${{ steps.detect.outcome != 'failure' }}
+        run: |
+          if [ "$SUCCESS" == "true" ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+  evaluate:
+    needs: [detect-env]
+    outputs:
+      outcome: ${{ steps.final.outputs.outcome }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout this repository
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          repository: "${{ needs.detect-env.outputs.repository }}"
+          ref: "${{ needs.detect-env.outputs.ref }}"
+          token: "${{ github.token }}"
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Log-in the registry
+        id: login
+        continue-on-error: true
+        uses: docker/login-action@49ed152c8eca782a232dede0303416e8f356c37b
+        with:
+          registry: docker.io
+          username: ${{ inputs.registry-username || secrets.registry-username }}
+          password: ${{ secrets.registry-password }}
+      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          repository: "${{ needs.detect-env.outputs.repository }}"
+          ref: "${{ needs.detect-env.outputs.ref }}"
+          token: "${{ github.token }}"
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Install policy evaluator
+        id: install
+        continue-on-error: true
+        uses: lmrs2/slsa-policy/actions/installer@v0.0.1
+      - id: evaluate
+        continue-on-error: true
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          PUBLISHER_ID: "https://github.com/${{ needs.detect-env.outputs.repository }}/.github/workflows/image-publisher.yml@${{ needs.detect-env.outputs.ref }}"
+          IMAGE: "${{ inputs.image }}@${{ inputs.digest }}"
+        working-directory: policies/publish
+        run: |
+          slsa-policy publish evaluate org.json . "${IMAGE}" "${ENVIRONMENT}"
+      - name: Final outcome
+        id: final
+        env:
+          SUCCESS: ${{ steps.checkout.outcome != 'failure' && steps.install.outcome != 'failure' && steps.login.outcome != 'failure' && steps.evaluate.outcome != 'failure' }}
+        run: |
+          if [ "$SUCCESS" == "true" ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+  final:
+    outputs:
+      outcome: ${{ steps.final.outputs.outcome }}
+    runs-on: ubuntu-latest
+    needs: [detect-env, evaluate]
+    if: always()
+    steps:
+      - name: Final outcome
+        id: final
+        env:
+          SUCCESS: ${{ needs.detect-env.outputs.outcome != 'failure' && needs.evaluate.outputs.outcome != 'failure' }}
+          CONTINUE: ${{ inputs.continue-on-error }}
+        run: |
+          if [ "$SUCCESS" == "true" ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # Handle continue-on-error logic
+          if [ "$CONTINUE" == "true" ] || [ "$SUCCESS" == "true" ]; then
+            echo "Workflow completed successfully"
+          else
+            echo "Workflow failed"
+            exit 1
+          fi
