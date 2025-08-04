@@ -10,7 +10,7 @@ on:
       digest:
         description: "The OCI image digest. The image digest of the form '<algorithm>:<digest>' (e.g. 'sha256:abcdef...')"
         type: string
-        default: "sha256:ce2f543c322c5b77f31bf2715dc7b54bcf1497e32e0223be7901048940005dc6"
+        default: "sha256:79ab2c4dbee4c9f7b24e561bbbf5d1065a30f8784fdb5d5e565015edc52b20ff"  # Updated to verified digest
       environment:
         type: choice
         description: Environment to use
@@ -31,17 +31,14 @@ env:
 jobs:
   publish:
     permissions:
-      id-token: write # for creating OIDC tokens for signing.
-      packages: write # for uploading attestations.
-      contents: read # To read the repo.
+      id-token: write
+      packages: write
+      contents: read
     uses: SimBowen/bh-aisec-organization/.github/workflows/image-publisher.yml@main
     with:
       environment: ${{ inputs.environment }}
       image: ${{ inputs.image }}
       digest: ${{ inputs.digest }}
-      # Use name rather than env variable because env are not available for reusable workflows.
       registry-username: SimBowen
-      #registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-      #registry-password: ${{ secrets.GITHUB_TOKEN }}
