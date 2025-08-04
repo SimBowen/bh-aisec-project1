@@ -39,6 +39,6 @@ jobs:
       environment: ${{ inputs.environment }}
       image: ${{ inputs.image }}
       digest: ${{ inputs.digest }}
-      registry-username: SimBowen
+      registry-username: htxbowen
     secrets:
       registry-password: ${{ secrets.REGISTRY_PASSWORD }}
