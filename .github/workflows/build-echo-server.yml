@@ -80,6 +80,51 @@ jobs:
       registry-password: ${{ secrets.REGISTRY_PASSWORD }}
       #registry-password: ${{ secrets.GITHUB_TOKEN }}
 
+  # NEW: Add verification job
+  verify-provenance:
+    name: Verify SLSA Provenance
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install slsa-verifier
+        uses: slsa-framework/slsa-verifier-action@v2
+        with:
+          verifier-version: v2.7.1
+
+      - name: Authenticate Docker
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ env.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Verify SLSA Provenance
+        run: |
+          # Construct the full image reference with digest
+          FULL_IMAGE="${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}"
+          
+          echo "Verifying image: ${FULL_IMAGE}"
+          
+          # Verify the provenance
+          slsa-verifier verify-image "${FULL_IMAGE}" \
+            --source-uri "github.com/${{ github.repository }}" \
+            --builder-id=https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml
+          
+          echo "✅ SLSA verification successful"
+
+      - name: Print Provenance (Optional)
+        run: |
+          FULL_IMAGE="${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}"
+          
+          echo "�� Provenance content:"
+          slsa-verifier verify-image "${FULL_IMAGE}" \
+            --source-uri "github.com/${{ github.repository }}" \
+            --builder-id=https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml \
+            --print-provenance | jq .
+
   run:
     needs: [build, provenance]
     runs-on: ubuntu-latest
